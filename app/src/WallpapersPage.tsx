@@ -1,6 +1,7 @@
 import "./App.css";
 import CompraWallpaper from "./CompraWallpaper";
 import CashbackMetadataPanel from "./CashbackMetadataPanel";
+import { crearTransaccionNuevoFWC } from "./solana/token2022";
 
 import {
   useConnection,
@@ -15,6 +16,7 @@ import {
 } from "react";
 
 import type { FormEvent } from "react";
+import { VersionedTransaction } from "@solana/web3.js";
 
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 
@@ -152,6 +154,109 @@ export default function WallpapersPage() {
   const { connection } = useConnection();
   const wallet = useWallet();
   const anchorWallet = useAnchorWallet();
+
+  const [creandoFWC, setCreandoFWC] = useState(false);
+  const [estadoCreacionFWC, setEstadoCreacionFWC] = useState("");
+
+  async function crearFWC() {
+    if (!wallet.publicKey || !wallet.sendTransaction) {
+      setEstadoCreacionFWC("Conecta primero Phantom.");
+      return;
+    }
+
+    try {
+      setCreandoFWC(true);
+      setEstadoCreacionFWC("Preparando el nuevo mint...");
+
+      const resultado = await crearTransaccionNuevoFWC(
+        connection,
+        wallet.publicKey
+      );
+
+      const latest = await connection.getLatestBlockhash("confirmed");
+      resultado.transaction.feePayer = wallet.publicKey;
+      resultado.transaction.recentBlockhash = latest.blockhash;
+
+      // Firmar únicamente con la clave temporal del mint para simular.
+      resultado.transaction.partialSign(resultado.mint);
+
+      setEstadoCreacionFWC("Comprobando la transacción antes de abrir Phantom...");
+
+      const transaccionSimulacion = new VersionedTransaction(
+        resultado.transaction.compileMessage()
+      );
+      transaccionSimulacion.sign([resultado.mint]);
+
+      const simulacion = await connection.simulateTransaction(
+        transaccionSimulacion,
+        {
+          sigVerify: false,
+          replaceRecentBlockhash: false,
+          commitment: "confirmed",
+        }
+      );
+
+      if (simulacion.value.err) {
+        const detalle = (simulacion.value.logs || []).join("\\n");
+        console.error("SIMULACIÓN FWC FALLIDA:", simulacion.value.err, detalle);
+        setEstadoCreacionFWC(
+          "SIMULACIÓN FALLIDA: " +
+          JSON.stringify(simulacion.value.err) +
+          "\\n" + detalle
+        );
+        return;
+      }
+
+      setEstadoCreacionFWC("Simulación correcta. Confirma la creación del token en Phantom.");
+
+      const firma = await wallet.sendTransaction(
+        resultado.transaction,
+        connection,
+        { signers: [resultado.mint] }
+      );
+
+      await connection.confirmTransaction(
+        {
+          signature: firma,
+          blockhash: latest.blockhash,
+          lastValidBlockHeight: latest.lastValidBlockHeight,
+        },
+        "confirmed"
+      );
+
+      setEstadoCreacionFWC(
+        `FWC creado: ${resultado.mint.publicKey.toBase58()}`
+      );
+    } catch (error) {
+      console.error("ERROR COMPLETO AL CREAR FWC:", error);
+
+      let detalle = "";
+      try {
+        const e = error as any;
+        detalle = JSON.stringify(
+          e,
+          e && typeof e === "object"
+            ? Object.getOwnPropertyNames(e)
+            : undefined,
+          2
+        );
+      } catch {
+        detalle = String(error);
+      }
+
+      const mensaje = error instanceof Error
+        ? error.message
+        : String((error as any)?.message || error);
+
+      setEstadoCreacionFWC(
+        "ERROR AL CREAR FWC: " + mensaje +
+        (detalle && detalle !== "{}" ? "\\nDetalles: " + detalle : "")
+      );
+    } finally {
+      setCreandoFWC(false);
+    }
+  }
+
 
   // Datos de galerías y publicaciones.
   const [galeria, setGaleria] = useState<any>(null);
@@ -373,6 +478,10 @@ export default function WallpapersPage() {
         </div>
 
         <WalletMultiButton />
+        <button onClick={crearFWC} disabled={creandoFWC || !wallet.connected}>
+          {creandoFWC ? "CREANDO FWC..." : "CREAR TOKEN FWC"}
+        </button>
+        {estadoCreacionFWC && <p>{estadoCreacionFWC}</p>}
       </header>
 
       {/* PORTADA */}

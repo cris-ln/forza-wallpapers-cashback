@@ -12,7 +12,7 @@ import {
 
 // Configuración del token FWC en Devnet.
 export const FWC_MINT = new PublicKey(
-  "BHmHxWzpg21tWeaAtu4i4ywUkLa32CDoVUrbrjCyEomH"
+  "CkQ7RzCSCXEB9hWefua162ps8Q1b8ZUpB77aTPXDzNJf"
 );
 
 export const FWC_ADMIN = new PublicKey(
@@ -20,7 +20,7 @@ export const FWC_ADMIN = new PublicKey(
 );
 
 export const FWC_RESERVA = new PublicKey(
-  "ASYFV24iksv9HG14JG3fe4NTLp7g6BtzQtjzAYjSgNo3"
+  "FQa7xmwYFh2ArGNU2rTDUNz35xFr5krrhCDdK2fP6U7U"
 );
 
 export const FWC_DECIMALES = 2;

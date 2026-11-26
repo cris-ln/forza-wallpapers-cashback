@@ -1,3 +1,4 @@
+import ConfiguracionCashback from "./ConfiguracionCashback";
 import { useCallback, useEffect, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import {
@@ -9,7 +10,7 @@ import {
 import { PublicKey } from "@solana/web3.js";
 
 const MINT = new PublicKey(
-  "BHmHxWzpg21tWeaAtu4i4ywUkLa32CDoVUrbrjCyEomH"
+  "CkQ7RzCSCXEB9hWefua162ps8Q1b8ZUpB77aTPXDzNJf"
 );
 
 const ADMIN = new PublicKey(
@@ -17,7 +18,7 @@ const ADMIN = new PublicKey(
 );
 
 const RESERVE = new PublicKey(
-  "ASYFV24iksv9HG14JG3fe4NTLp7g6BtzQtjzAYjSgNo3"
+  "FQa7xmwYFh2ArGNU2rTDUNz35xFr5krrhCDdK2fP6U7U"
 );
 
 const DECIMALS = 2;
@@ -140,6 +141,7 @@ export default function CashbackMetadataPanel() {
 
   return (
     <section className="cashback-metadata-panel">
+      <ConfiguracionCashback />
       <h2>Token Cashback (FWC)</h2>
 
       <p>

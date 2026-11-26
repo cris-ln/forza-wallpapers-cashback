@@ -1,153 +1,113 @@
-import {
-  Connection,
-  PublicKey,
-  SystemProgram,
-  Transaction,
-} from "@solana/web3.js";
+import { Connection, PublicKey, SystemProgram } from "@solana/web3.js";
+import type { AnchorWallet } from "@solana/wallet-adapter-react";
+import { Buffer } from "buffer";
 
-import type { WalletContextState } from "@solana/wallet-adapter-react";
-import type BN from "bn.js";
+import {
+  TOKEN_2022_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  createAssociatedTokenAccountIdempotentInstruction,
+} from "@solana/spl-token";
+
+import {
+  FWC_MINT,
+  FWC_RESERVA,
+  obtenerATAFWC,
+} from "./cashback";
+
+import {
+  PROGRAM_ID,
+  obtenerPrograma,
+} from "./acciones";
 
 /**
- * Realiza el pago de un wallpaper directamente al creador.
+ * Compra atómica:
+ * - Crea el ATA FWC del comprador si todavía no existe.
+ * - Envía el precio SOL directamente al creador.
+ * - Entrega el cashback desde la reserva central.
+ * - Registra la compra en la blockchain.
  *
- * El comprador firma y paga la transacción.
- * El dinero llega directamente a la wallet del creador.
- *
- * El cashback se procesa posteriormente mediante
- * una operación independiente aprobada por la administradora.
+ * Todas las operaciones se ejecutan en una sola transacción
+ * y requieren una sola firma del comprador.
  */
 export async function comprarWallpaper(
   connection: Connection,
-  wallet: WalletContextState,
-  creador: PublicKey,
-  precioLamports: BN
+  wallet: AnchorWallet,
+  wallpaper: PublicKey,
+  creador: PublicKey
 ): Promise<string> {
-  if (!wallet.publicKey) {
-    throw new Error("Conecta tu wallet para comprar este wallpaper.");
-  }
+  const comprador = wallet.publicKey;
 
-  if (wallet.publicKey.equals(creador)) {
+  if (comprador.equals(creador)) {
     throw new Error("No puedes comprar tu propio wallpaper.");
   }
 
-  const lamports = Number(precioLamports.toString());
+  // Identificador único de esta compra.
+  const purchaseId = crypto.getRandomValues(new Uint8Array(32));
 
-  if (!Number.isSafeInteger(lamports) || lamports <= 0) {
-    throw new Error("El precio del wallpaper no es válido.");
-  }
+  // PDA del registro de compra.
+  const [cashbackRecord] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("cashback"),
+      Buffer.from(purchaseId),
+    ],
+    PROGRAM_ID
+  );
 
-  const { blockhash, lastValidBlockHeight } =
-    await connection.getLatestBlockhash("confirmed");
+  // PDA de configuración de cashback.
+  const [config] = PublicKey.findProgramAddressSync(
+    [Buffer.from("cashback_config")],
+    PROGRAM_ID
+  );
 
-  const transaccion = new Transaction();
+  // PDA PermanentDelegate del token FWC.
+  const [fwcDelegate] = PublicKey.findProgramAddressSync(
+    [Buffer.from("fwc_delegate")],
+    PROGRAM_ID
+  );
 
-  transaccion.feePayer = wallet.publicKey;
-  transaccion.recentBlockhash = blockhash;
+  // ATA del comprador bajo Token-2022.
+  const buyerTokenAccount = obtenerATAFWC(comprador);
 
-  transaccion.add(
-    SystemProgram.transfer({
-      fromPubkey: wallet.publicKey,
-      toPubkey: creador,
-      lamports,
+  // El comprador paga la creación de su propia cuenta ATA.
+  const crearATA = createAssociatedTokenAccountIdempotentInstruction(
+    comprador,
+    buyerTokenAccount,
+    comprador,
+    FWC_MINT,
+    TOKEN_2022_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+
+  const programa = obtenerPrograma(connection, wallet);
+
+  // La instrucción on-chain realiza el pago SOL y el cashback.
+  const firma = await (programa.methods as any)
+    .registrarCashback(Array.from(purchaseId))
+    .accounts({
+      cashbackRecord,
+      buyer: comprador,
+      wallpaper,
+      creator: creador,
+      config,
+      fwcDelegate,
+      mint: FWC_MINT,
+      reserve: FWC_RESERVA,
+      buyerTokenAccount,
+      tokenProgram: TOKEN_2022_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
     })
-  );
-
-  const firma = await wallet.sendTransaction(
-    transaccion,
-    connection
-  );
+    .preInstructions([crearATA])
+    .rpc();
 
   const confirmacion = await connection.confirmTransaction(
-    {
-      signature: firma,
-      blockhash,
-      lastValidBlockHeight,
-    },
+    firma,
     "confirmed"
   );
 
   if (confirmacion.value.err) {
-    throw new Error("El pago no pudo confirmarse en Solana Devnet.");
+    throw new Error("La compra no pudo confirmarse en Solana Devnet.");
   }
 
   return firma;
-}
-
-/**
- * Verifica un pago de wallpaper en Solana Devnet.
- *
- * Comprueba:
- * 1. Que la transacción exista y esté confirmada.
- * 2. Que no haya terminado con errores.
- * 3. Que el comprador haya firmado.
- * 4. Que exista una transferencia System Program
- *    por el importe exacto al creador indicado.
- *
- * No entrega cashback ni registra compras.
- */
-export async function verificarPagoWallpaper(
-  connection: Connection,
-  firma: string,
-  comprador: PublicKey,
-  creador: PublicKey,
-  precioLamports: BN
-): Promise<boolean> {
-  const importeEsperado = BigInt(precioLamports.toString());
-
-  if (importeEsperado <= 0n) {
-    return false;
-  }
-
-  const transaccion = await connection.getParsedTransaction(
-    firma,
-    {
-      commitment: "confirmed",
-      maxSupportedTransactionVersion: 0,
-    }
-  );
-
-  if (!transaccion || transaccion.meta?.err) {
-    return false;
-  }
-
-  const compradorFirmo = transaccion.transaction.message.accountKeys.some(
-    (cuenta) =>
-      cuenta.pubkey.equals(comprador) && cuenta.signer
-  );
-
-  if (!compradorFirmo) {
-    return false;
-  }
-
-  const instrucciones =
-    transaccion.transaction.message.instructions;
-
-  for (const instruccion of instrucciones) {
-    if (!("parsed" in instruccion)) {
-      continue;
-    }
-
-    const datos = instruccion.parsed as {
-      type?: string;
-      info?: {
-        source?: string;
-        destination?: string;
-        lamports?: number | string;
-      };
-    };
-
-    if (
-      instruccion.program === "system" &&
-      datos.type === "transfer" &&
-      datos.info?.source === comprador.toBase58() &&
-      datos.info?.destination === creador.toBase58() &&
-      datos.info?.lamports !== undefined &&
-      BigInt(String(datos.info.lamports)) === importeEsperado
-    ) {
-      return true;
-    }
-  }
-
-  return false;
 }
