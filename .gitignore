@@ -36,3 +36,9 @@ Thumbs.db
 *.swp
 *.swp
 programs/forza_wallpapers/src/lib.rs.backup
+
+# Respaldos locales de desarrollo
+*.bak
+*.bak-*
+*.legacy
+*.backup
